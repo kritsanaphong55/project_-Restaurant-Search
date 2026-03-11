@@ -29,7 +29,7 @@ if (missingEnv.length > 0) {
 // ── Middleware ───────────────────────────────────────────────
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    origin: process.env.FRONTEND_URL || "https://project-restaurant-search-fn.vercel.app",
     credentials: true,
   })
 );
@@ -85,7 +85,7 @@ async function startServer() {
     console.log("⏳ Starting server...");
     console.log(`🌍 NODE_ENV: ${process.env.NODE_ENV || "development"}`);
     console.log(`🔌 PORT: ${PORT}`);
-    console.log(`🌐 FRONTEND_URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}`);
+    console.log(`🌐 FRONTEND_URL: ${process.env.FRONTEND_URL || "https://project-restaurant-search-fn.vercel.app"}`);
     console.log(`🔑 JWT_SECRET exists: ${!!process.env.JWT_SECRET}`);
 
     await testConnection();
