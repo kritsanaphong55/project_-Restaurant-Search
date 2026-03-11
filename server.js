@@ -13,15 +13,27 @@ const restaurantRoutes = require("./routes/restaurants");
 const reviewRoutes = require("./routes/reviews");
 const menuRoutes = require("./routes/menu");
 const imageRoutes = require("./routes/images");
-const restaurantImageRoutes = require("./routes/restaurant_images"); // ✅ เพิ่ม
+const restaurantImageRoutes = require("./routes/restaurant_images");
 const userRoutes = require("./routes/users");
 const categoryRoutes = require("./routes/categories");
 
+// ── Environment check ────────────────────────────────────────
+const requiredEnv = ["JWT_SECRET"];
+const missingEnv = requiredEnv.filter((key) => !process.env[key]);
+
+if (missingEnv.length > 0) {
+  console.error(`❌ Missing required environment variables: ${missingEnv.join(", ")}`);
+  process.exit(1);
+}
+
 // ── Middleware ───────────────────────────────────────────────
-app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:3000",
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -30,9 +42,10 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 // ── Health check ─────────────────────────────────────────────
 app.get("/", (_req, res) => {
-  res.json({
+  res.status(200).json({
     ok: true,
     message: "Restaurant API is running",
+    environment: process.env.NODE_ENV || "development",
   });
 });
 
@@ -42,7 +55,7 @@ app.use("/api/restaurants", restaurantRoutes);
 app.use("/api/reviews", reviewRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/images", imageRoutes);
-app.use("/api/restaurant-images", restaurantImageRoutes); // ✅ เพิ่ม
+app.use("/api/restaurant-images", restaurantImageRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/categories", categoryRoutes);
 
@@ -56,8 +69,9 @@ app.use((req, res) => {
 
 // ── Global error handler ─────────────────────────────────────
 app.use((err, _req, res, _next) => {
-  console.error("UNHANDLED SERVER ERROR:", err);
-  res.status(500).json({
+  console.error("❌ UNHANDLED SERVER ERROR:", err);
+
+  res.status(err.status || 500).json({
     ok: false,
     message: err.message || "Internal server error",
   });
@@ -66,17 +80,34 @@ app.use((err, _req, res, _next) => {
 // ── Start server ─────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 
-const server = app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
-  await testConnection(); // ✅ ทดสอบ DB หลัง server เริ่ม
-});
+async function startServer() {
+  try {
+    console.log("⏳ Starting server...");
+    console.log(`🌍 NODE_ENV: ${process.env.NODE_ENV || "development"}`);
+    console.log(`🔌 PORT: ${PORT}`);
+    console.log(`🌐 FRONTEND_URL: ${process.env.FRONTEND_URL || "http://localhost:3000"}`);
+    console.log(`🔑 JWT_SECRET exists: ${!!process.env.JWT_SECRET}`);
 
-server.on("error", (err) => {
-  if (err.code === "EADDRINUSE") {
-    console.error(`❌ Port ${PORT} is already in use`);
-  } else {
-    console.error("❌ Server error:", err.message);
+    await testConnection();
+    console.log("✅ Database connected successfully");
+
+    const server = app.listen(PORT, () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+    });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        console.error(`❌ Port ${PORT} is already in use`);
+      } else {
+        console.error("❌ Server error:", err.message);
+      }
+      process.exit(1);
+    });
+  } catch (error) {
+    console.error("❌ Failed to start server");
+    console.error("Reason:", error.message);
+    process.exit(1);
   }
-  process.exit(1);
-});
+}
+
+startServer();
