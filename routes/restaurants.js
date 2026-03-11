@@ -11,22 +11,31 @@ function buildFileUrl(req, filename) {
 }
 
 // ── SQL helpers ──────────────────────────────────────────────
+// ใช้เวลาไทย (Bangkok Time) โดยอิงจาก UTC
+const bangkokTimeSql = `TIME(UTC_TIMESTAMP() + INTERVAL 7 HOUR)`;
+
 const isOpenNowSql = `
   CASE
     WHEN r.is_active = 0 THEN 0
     WHEN r.open_time IS NULL OR r.close_time IS NULL THEN 0
-    WHEN r.open_time <= r.close_time
-      THEN CASE WHEN CURTIME() BETWEEN r.open_time AND r.close_time THEN 1 ELSE 0 END
+    WHEN r.open_time <= r.close_time THEN
+      CASE
+        WHEN ${bangkokTimeSql} BETWEEN r.open_time AND r.close_time THEN 1
+        ELSE 0
+      END
     ELSE
-      CASE WHEN CURTIME() >= r.open_time OR CURTIME() <= r.close_time THEN 1 ELSE 0 END
+      CASE
+        WHEN ${bangkokTimeSql} >= r.open_time OR ${bangkokTimeSql} <= r.close_time THEN 1
+        ELSE 0
+      END
   END
 `;
 
 const openNowWhereSql = `
   r.is_active = 1 AND (
-    (r.open_time <= r.close_time AND CURTIME() BETWEEN r.open_time AND r.close_time)
+    (r.open_time <= r.close_time AND ${bangkokTimeSql} BETWEEN r.open_time AND r.close_time)
     OR
-    (r.open_time > r.close_time AND (CURTIME() >= r.open_time OR CURTIME() <= r.close_time))
+    (r.open_time > r.close_time AND (${bangkokTimeSql} >= r.open_time OR ${bangkokTimeSql} <= r.close_time))
   )
 `;
 
@@ -96,7 +105,6 @@ router.get("/search", async (req, res) => {
       sql += " AND r.price_max <= ?";
       params.push(Number(max));
     }
-    // ✅ ถ้าต้องการกรองตาม foodtype ให้ใช้ EXISTS แทน JOIN เพื่อไม่ให้ duplicate rows
     if (foodtype_id) {
       sql += `
         AND EXISTS (
@@ -309,7 +317,8 @@ router.delete("/images/:imageId", requireAuth, async (req, res) => {
     }
 
     const isAdmin = req.user.role === "ADMIN";
-    const isOwner = req.user.role === "OWNER" && image.owner_id === req.user.user_id;
+    const isOwner =
+      req.user.role === "OWNER" && image.owner_id === req.user.user_id;
 
     if (!isAdmin && !isOwner) {
       return res.status(403).json({ ok: false, message: "ไม่มีสิทธิ์ลบรูปภาพนี้" });
@@ -317,7 +326,6 @@ router.delete("/images/:imageId", requireAuth, async (req, res) => {
 
     await pool.query("DELETE FROM restaurant_images WHERE image_id = ?", [imageId]);
 
-    // ✅ ลบไฟล์จริงออกจาก disk
     if (image.image_url) {
       const filename = path.basename(image.image_url);
       const filepath = path.join(__dirname, "..", "uploads", filename);
@@ -373,7 +381,6 @@ router.get("/:id/images", async (req, res) => {
 
 /**
  * POST /api/restaurants/:id/images/upload
- * ✅ เพิ่ม handleUploadError
  */
 router.post(
   "/:id/images/upload",
@@ -499,10 +506,17 @@ router.post("/", requireAuth, requireRole("OWNER"), async (req, res) => {
       close_time,
       price_min,
       price_max,
-      foodtype_ids, // array เช่น [1, 2, 3]
+      foodtype_ids,
     } = req.body;
 
-    if (!restaurant_name || !address || latitude == null || longitude == null || !open_time || !close_time) {
+    if (
+      !restaurant_name ||
+      !address ||
+      latitude == null ||
+      longitude == null ||
+      !open_time ||
+      !close_time
+    ) {
       return res.status(400).json({ ok: false, message: "กรอกข้อมูลร้านไม่ครบ" });
     }
 
@@ -527,15 +541,21 @@ router.post("/", requireAuth, requireRole("OWNER"), async (req, res) => {
         open_time, close_time, price_min, price_max, owner_id, status, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 1)`,
       [
-        restaurant_name, description || null, address,
-        latNum, lngNum, open_time, close_time,
-        priceMinNum, priceMaxNum, req.user.user_id,
+        restaurant_name,
+        description || null,
+        address,
+        latNum,
+        lngNum,
+        open_time,
+        close_time,
+        priceMinNum,
+        priceMaxNum,
+        req.user.user_id,
       ]
     );
 
     const restaurantId = result.insertId;
 
-    // ✅ Insert food types (many-to-many)
     if (Array.isArray(foodtype_ids) && foodtype_ids.length > 0) {
       const ftValues = foodtype_ids.map((ftId) => [restaurantId, Number(ftId)]);
       await pool.query(
@@ -557,7 +577,7 @@ router.post("/", requireAuth, requireRole("OWNER"), async (req, res) => {
 });
 
 /**
- * PUT /api/restaurants/:id/owner  ✅ เพิ่มใหม่
+ * PUT /api/restaurants/:id/owner
  * OWNER แก้ไขข้อมูลร้านตัวเอง
  */
 router.put("/:id/owner", requireAuth, requireRole("OWNER"), async (req, res) => {
@@ -611,18 +631,24 @@ router.put("/:id/owner", requireAuth, requireRole("OWNER"), async (req, res) => 
            price_min = ?, price_max = ?
        WHERE restaurant_id = ?`,
       [
-        restaurant_name, description || null, address,
-        latNum, lngNum,
-        open_time || "08:00:00", close_time || "22:00:00",
-        priceMinNum, priceMaxNum, id,
+        restaurant_name,
+        description || null,
+        address,
+        latNum,
+        lngNum,
+        open_time || "08:00:00",
+        close_time || "22:00:00",
+        priceMinNum,
+        priceMaxNum,
+        id,
       ]
     );
 
-    // ✅ Update food types — ลบเดิมแล้ว insert ใหม่
     await pool.query(
       "DELETE FROM restaurant_food_types WHERE restaurant_id = ?",
       [id]
     );
+
     if (Array.isArray(foodtype_ids) && foodtype_ids.length > 0) {
       const ftValues = foodtype_ids.map((ftId) => [id, Number(ftId)]);
       await pool.query(
@@ -756,9 +782,19 @@ router.patch("/:id/reject", requireAuth, requireRole("ADMIN"), async (req, res) 
 router.post("/admin", requireAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const {
-      restaurant_name, description, address, latitude, longitude,
-      open_time, close_time, price_min, price_max,
-      owner_id, status, is_active, foodtype_ids,
+      restaurant_name,
+      description,
+      address,
+      latitude,
+      longitude,
+      open_time,
+      close_time,
+      price_min,
+      price_max,
+      owner_id,
+      status,
+      is_active,
+      foodtype_ids,
     } = req.body;
 
     if (!restaurant_name || !address) {
@@ -804,7 +840,8 @@ router.post("/admin", requireAuth, requireRole("ADMIN"), async (req, res) => {
 
     const safeStatus =
       status === "PENDING" || status === "REJECTED" || status === "APPROVED"
-        ? status : "APPROVED";
+        ? status
+        : "APPROVED";
 
     const [result] = await pool.query(
       `INSERT INTO restaurants
@@ -812,10 +849,18 @@ router.post("/admin", requireAuth, requireRole("ADMIN"), async (req, res) => {
         open_time, close_time, price_min, price_max, owner_id, status, is_active)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        restaurant_name, description || null, address,
-        lat, lng,
-        open_time || "08:00:00", close_time || "22:00:00",
-        min, max, ownerIdNum, safeStatus, safeIsActive,
+        restaurant_name,
+        description || null,
+        address,
+        lat,
+        lng,
+        open_time || "08:00:00",
+        close_time || "22:00:00",
+        min,
+        max,
+        ownerIdNum,
+        safeStatus,
+        safeIsActive,
       ]
     );
 
@@ -849,9 +894,19 @@ router.patch("/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
-      restaurant_name, description, address, latitude, longitude,
-      open_time, close_time, price_min, price_max,
-      owner_id, status, is_active, foodtype_ids,
+      restaurant_name,
+      description,
+      address,
+      latitude,
+      longitude,
+      open_time,
+      close_time,
+      price_min,
+      price_max,
+      owner_id,
+      status,
+      is_active,
+      foodtype_ids,
     } = req.body;
 
     if (!restaurant_name || !address) {
@@ -894,7 +949,8 @@ router.patch("/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
 
     const safeStatus =
       status === "PENDING" || status === "REJECTED" || status === "APPROVED"
-        ? status : "APPROVED";
+        ? status
+        : "APPROVED";
 
     await pool.query(
       `UPDATE restaurants
@@ -903,14 +959,22 @@ router.patch("/:id", requireAuth, requireRole("ADMIN"), async (req, res) => {
            price_min = ?, price_max = ?, owner_id = ?, status = ?, is_active = ?
        WHERE restaurant_id = ?`,
       [
-        restaurant_name, description || null, address,
-        lat, lng,
-        open_time || "08:00:00", close_time || "22:00:00",
-        min, max, ownerIdNum, safeStatus, safeIsActive, id,
+        restaurant_name,
+        description || null,
+        address,
+        lat,
+        lng,
+        open_time || "08:00:00",
+        close_time || "22:00:00",
+        min,
+        max,
+        ownerIdNum,
+        safeStatus,
+        safeIsActive,
+        id,
       ]
     );
 
-    // ✅ Update food types
     await pool.query(
       "DELETE FROM restaurant_food_types WHERE restaurant_id = ?",
       [id]
